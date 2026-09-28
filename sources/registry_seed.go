@@ -7,6 +7,21 @@ import "github.com/yecharlot/Pulso-Cubano/domain"
 func SeedRegistry() *domain.SourceRegistry {
 	return domain.NewSourceRegistry(
 		domain.Source{
+			ID: "eltoque-trmi", Name: "elTOQUE TRMI API", Type: domain.SourceMarketData,
+			Coverage: "Cuba informal FX (referential)", Frequency: "realtime/hourly",
+			Reliability: 0.75, FreshnessHrs: 1, Access: domain.AccessLimited,
+			LegalNotes: "Requires API token from tasas.eltoque.com; cite elTOQUE; rates are referential.",
+			Adapter: "gene.fx.eltoque", Active: true,
+		},
+		domain.Source{
+			ID: "qvapay-p2p", Name: "QvaPay P2P averages", Type: domain.SourceMarketData,
+			Coverage: "Observed P2P activity (auth API)", Frequency: "on-demand",
+			Reliability: 0.6, FreshnessHrs: 1, Access: domain.AccessLimited,
+			LegalNotes: "Requires QVAPAY_TOKEN with least privilege; not official FX.",
+			Adapter: "gene.fx.qvapay", Active: true,
+		},
+
+		domain.Source{
 			ID: "web-search", Name: "Web Search Sensor", Type: domain.SourceSearch,
 			Coverage: "Cuba / public web results", Frequency: "scheduled",
 			Reliability: 0.5, FreshnessHrs: 24, Access: domain.AccessAllowed,
