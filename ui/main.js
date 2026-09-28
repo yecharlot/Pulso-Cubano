@@ -4,7 +4,7 @@
  */
 import {
   AlsetInspector, Column, Row, Text, mod, alsetState, Theme
-} from '../../Alset-JS-Runtime/src/core/AlsetPulseCore.js';
+} from './vendor/AlsetPulseCore.js';
 
 Theme.set({
   primary: '#F4B400',

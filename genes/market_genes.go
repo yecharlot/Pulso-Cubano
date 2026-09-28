@@ -125,7 +125,10 @@ func min(a, b float64) float64 {
 
 // RunAll executes all genes in order (FX → QvaPay → optional manual).
 func RunAll(ctx context.Context, ad *prismatec.Adapter, orgID string, extra ...Gene) ([]GeneResult, error) {
-	list := []Gene{FXGene{}, QvaPayGene{}}
+	list := []Gene{
+		FXGene{}, QvaPayGene{},
+		GlobalFXGene{}, WikiGene{}, NewsRSSGene{}, SearchWebGene{},
+	}
 	list = append(list, extra...)
 	var out []GeneResult
 	for _, g := range list {
