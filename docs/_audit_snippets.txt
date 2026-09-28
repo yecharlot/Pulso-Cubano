@@ -1,0 +1,490 @@
+network/network.go
+// Package network defines transport interfaces (Phase 10).
+// libp2p (or others) plug in as adapters; organisms never import them directly.
+package network
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+// NodeAddr is a logical network address (not necessarily multiaddr yet).
+type NodeAddr struct {
+	NodeID string
+	Addrs  []string // e.g. "local://node-a", later /ip4/.../tcp/...
+}
+
+// Message is a signed-ready payload between nodes.
+type Message struct {
+	From    string
+	To      string // empty = broadcast
+	Type    string
+	Payload []byte
+	SentAt  time.Time
+}
+
+// Handler receives messages.
+type Handler func(Message)
+
+// Transport is the core messaging interface.
+type Transport interface {
+	ID() string
+	Listen(ctx context.Context) error
+	Close() error
+	Send(ctx context.Context, to string, msg Message) error
+	Broadcast(ctx context.Context, msg Message) error
+	OnMessage(h Handler)
+	Peers() []NodeAddr
+}
+
+// Discovery finds peers.
+type Discovery interface {
+	Advertise(ctx context.Context, id string) error
+	FindPeers(ctx context.Context) ([]NodeAddr, error)
+}
+
+// Presence tracks online nodes.
+type Presence interface {
+	Heartbeat(ctx context.Context) error
+	Online() []string
+	IsOnline(nodeID string) bool
+}
+
+// --- Local in-process fabric (multi-node demos without libp2p) ---
+
+var defaultFabric = NewFabric()
+
+// Fabric is a process-local switchboard connecting LocalTransport instances.
+type Fabric struct {
+	mu    sync.RWMutex
+	nodes map[string]*LocalTransport
+}
+
+func NewFabric() *Fabric {
+	return &Fabric{nodes: map[string]*LocalTransport{}}
+}
+
+func DefaultFabric() *Fabric { return defaultFabric }
+
+// LocalTransport implements Transport over an in-memory fabric.
+type LocalTransport struct {
+	id      string
+	fabric  *Fabric
+	mu      sync.RWMutex
+	handlers []Handler
+	online  bool
+}
+
+func NewLocalTransport(nodeID string, fabric *Fabric) *LocalTransport {
+	if fabric == nil {
+		fabric = DefaultFabric()
+
+====
+
+runtime/inference/inference.go
+// Package inference defines AI/model providers without hardcoding a vendor (Phase 9).
+package inference
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+)
+
+// Request is a provider-agnostic inference call.
+type Request struct {
+	Model   string
+	Prompt  string
+	System  string
+	MaxTokens int
+}
+
+// Response from a provider.
+type Response struct {
+	Text     string
+	Provider string
+	Model    string
+}
+
+// Provider is pluggable (OpenAI, Ollama, local, HTTP, …).
+type Provider interface {
+	Name() string
+	Infer(ctx context.Context, req Request) (Response, error)
+}
+
+// Registry of providers.
+type Registry struct {
+	mu   sync.RWMutex
+	by   map[string]Provider
+	def  string
+}
+
+func NewRegistry() *Registry {
+	return &Registry{by: map[string]Provider{}}
+}
+
+func (r *Registry) Register(p Provider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.by[p.Name()] = p
+	if r.def == "" {
+		r.def = p.Name()
+	}
+}
+
+func (r *Registry) SetDefault(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.by[name]; !ok {
+		return fmt.Errorf("unknown provider: %s", name)
+	}
+	r.def = name
+	return nil
+}
+
+func (r *Registry) Get(name string) (Provider, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if name == "" {
+		name = r.def
+	}
+	p, ok := r.by[name]
+	if !ok {
+		return nil, fmt.Errorf("inference provider not found: %s", name)
+	}
+	return p, nil
+}
+
+// EchoProvider is a deterministic local stand-in (no external API).
+type EchoProvider struct{}
+
+func (EchoProvider) Name() string { return "echo" }
+
+func (EchoProvider) Infer(ctx context.Context, req Request) (Response, error) {
+
+====
+
+runtime/mind/mind.go
+// Package mind is the cognitive layer: observe → evaluate → propose → record Core results.
+// Mind never authorizes or executes; Core does.
+package mind
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/yecharlot/PrismaTec-Core/runtime/inference"
+	"github.com/yecharlot/PrismaTec-Core/runtime/zyrion"
+)
+
+// Mind is the cognitive contract for an organism.
+type Mind interface {
+	OrganismID() string
+	Observe(obs Observation) error
+	State() CognitiveState
+	Evaluate(ctx context.Context) (EvaluationResult, error)
+	RecordResult(res ActionResult) error
+}
+
+// Config for a Mind instance.
+type Config struct {
+	OrganismID string
+	Rules      zyrion.RuleSet
+	Provider   inference.Provider // optional; nil = symbolic only
+}
+
+// Engine is the default Mind implementation (Director + Zyrion).
+type Engine struct {
+	mu       sync.Mutex
+	cfg      Config
+	beliefs  map[string]Belief
+	decisions []Decision
+	pending  []ActionRequest
+	lastObs  *Observation
+	seq      int
+}
+
+func New(cfg Config) *Engine {
+	if cfg.Rules.Version == "" {
+		cfg.Rules.Version = "1"
+	}
+	return &Engine{
+		cfg:     cfg,
+		beliefs: map[string]Belief{},
+	}
+}
+
+func (e *Engine) OrganismID() string { return e.cfg.OrganismID }
+
+func (e *Engine) Observe(obs Observation) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if obs.OrganismID != "" && obs.OrganismID != e.cfg.OrganismID {
+		return fmt.Errorf("observation organism mismatch")
+	}
+	obs.OrganismID = e.cfg.OrganismID
+	if obs.At.IsZero() {
+		obs.At = time.Now().UTC()
+	}
+	e.lastObs = &obs
+	// Derive simple beliefs from observation type/payload (deterministic).
+	e.ingestObservation(obs)
+	return nil
+}
+
+func (e *Engine) ingestObservation(obs Observation) {
+	now := time.Now().UTC()
+	switch obs.Type {
+	case "order.created", "workorder.open":
+		e.beliefs["order.open"] = Belief{Proposition: "order.open", Value: zyrion.Affirmed, Source: obs.Source, At: now, RuleVersion: e.cfg.Rules.Version}
+	case "order.closed":
+		e.beliefs["order.open"] = Belief{Proposition: "order.open", Value: zyrion.Negated, Source: obs.Source, At: now}
+	case "evidence.for":
+		prop, _ := obs.Payload["proposition"].(string)
+		if prop != "" {
+			e.beliefs[prop] = Belief{Proposition: prop, Value: zyrion.Affirmed, Source: obs.Source, At: now}
+
+====
+
+core/policy/policy.go
+// Package policy implements a minimal, evolvable authorization engine.
+//
+// Model (Phase 7):
+//
+//	WHO  can  DO WHAT  on  WHICH resource  under  CONDITIONS
+//
+// This is intentionally small for the Core. Enterprise IAM can plug in later
+// via a PolicyProvider without changing callers of Evaluate.
+package policy
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Effect of a rule.
+type Effect string
+
+const (
+	EffectAllow Effect = "allow"
+	EffectDeny  Effect = "deny"
+)
+
+// Subject is WHO (agent, organism, node, role, or "*").
+type Subject struct {
+	ID   string `json:"id,omitempty"`   // e.g. organism id or "agent:A"
+	Role string `json:"role,omitempty"` // e.g. "researcher"
+	Type string `json:"type,omitempty"` // organism|agent|node|user|"*"
+}
+
+// Resource is WHICH (optional scope).
+type Resource struct {
+	Type string `json:"type,omitempty"` // e.g. "memory", "database", "organism"
+	ID   string `json:"id,omitempty"`   // specific id or "*"
+}
+
+// Condition is a simple key/value constraint (Phase 7 subset).
+// Examples: status=running, env=local
+type Condition map[string]string
+
+// Rule is one authorization statement.
+type Rule struct {
+	ID         string    `json:"id,omitempty"`
+	Subject    Subject   `json:"subject"`
+	Action     string    `json:"action"` // capability / verb, e.g. memory.read
+	Resource   Resource  `json:"resource,omitempty"`
+	Effect     Effect    `json:"effect"`
+	Conditions Condition `json:"conditions,omitempty"`
+	Priority   int       `json:"priority,omitempty"` // higher wins
+}
+
+// Request is what Evaluate answers.
+type Request struct {
+	Subject    Subject
+	Action     string
+	Resource   Resource
+	Context    Condition // runtime facts (status, env, ...)
+	DefaultDeny bool     // if no rule matches → deny when true (default)
+}
+
+// Decision is the result of Evaluate.
+type Decision struct {
+	Allowed bool   `json:"allowed"`
+	Effect  Effect `json:"effect"`
+	RuleID  string `json:"rule_id,omitempty"`
+	Reason  string `json:"reason"`
+	At      time.Time `json:"at"`
+}
+
+// Engine holds ordered rules and evaluates requests.
+type Engine struct {
+	Rules []Rule
+}
+
+// NewEngine returns an empty engine (default deny).
+func NewEngine(rules ...Rule) *Engine {
+	return &Engine{Rules: append([]Rule(nil), rules...)}
+}
+
+
+====
+
+core/pulse/pulse.go
+// Package pulse implements the outward communication unit of PrismaTec Core.
+//
+// A Pulse is an asynchronous, identity-directed stimulus:
+//
+//	{ target, type, data, meta, source, timestamp }
+//
+// Philosophy (from Alset-JS + AlsetOS): do not update the whole world when one
+// element changes — address a specific organism, node, or (later) UI node.
+//
+// Phase 4: in-process hub + ring buffer log. Phase 5+ will transport pulses
+// over AIP (SSE/WebSocket) to Alset-JS and peers.
+package pulse
+
+import (
+	"sync"
+	"time"
+)
+
+// Pulse is the fundamental communication unit toward observers and peers.
+type Pulse struct {
+	Target    string         `json:"target"` // organism id, node id, or UI key
+	Type      string         `json:"type"`
+	Data      map[string]any `json:"data,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
+	Source    string         `json:"source,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+}
+
+// Handler receives pulses.
+type Handler func(Pulse)
+
+// Hub fans out pulses to subscribers and keeps a recent log for inspect/CLI.
+type Hub struct {
+	mu       sync.RWMutex
+	handlers []Handler
+	byTarget map[string][]Handler
+	log      []Pulse
+	logMax   int
+	seq      uint64
+}
+
+// NewHub creates a pulse hub with a bounded recent log (default 256).
+func NewHub(logMax int) *Hub {
+	if logMax <= 0 {
+		logMax = 256
+	}
+	return &Hub{
+		byTarget: make(map[string][]Handler),
+		logMax:   logMax,
+	}
+}
+
+// Subscribe registers a handler for all pulses.
+func (h *Hub) Subscribe(fn Handler) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.handlers = append(h.handlers, fn)
+}
+
+// SubscribeTarget registers a handler for a specific target key.
+func (h *Hub) SubscribeTarget(target string, fn Handler) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.byTarget[target] = append(h.byTarget[target], fn)
+}
+
+// Emit sends a pulse to matching handlers and records it in the log.
+func (h *Hub) Emit(p Pulse) {
+	if p.Timestamp.IsZero() {
+		p.Timestamp = time.Now().UTC()
+	}
+	h.mu.Lock()
+	h.seq++
+	if p.Meta == nil {
+		p.Meta = map[string]any{}
+	}
+	p.Meta["seq"] = h.seq
+	h.log = append(h.log, p)
+	if len(h.log) > h.logMax {
+		h.log = h.log[len(h.log)-h.logMax:]
+
+====
+
+core/organism/manager.go
+package organism
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/yecharlot/PrismaTec-Core/core/events"
+	"github.com/yecharlot/PrismaTec-Core/core/registry"
+	cidstore "github.com/yecharlot/PrismaTec-Core/storage/cid"
+	"github.com/yecharlot/PrismaTec-Core/core/policy"
+)
+
+// Manager owns organism lifecycle, registry sync and local persistence.
+type Manager struct {
+	mu       sync.RWMutex
+	byID     map[string]*Organism
+	dataDir  string
+	nodeID   string
+	nodeName string
+	bus      *events.Bus
+	reg      *registry.Registry
+	blocks   cidstore.Store
+}
+
+// NewManager creates a manager bound to a node.
+func NewManager(dataDir, nodeID, nodeName string, bus *events.Bus, reg *registry.Registry) (*Manager, error) {
+	orgDir := filepath.Join(dataDir, "organisms")
+	if err := os.MkdirAll(orgDir, 0700); err != nil {
+		return nil, fmt.Errorf("create organisms dir: %w", err)
+	}
+	blocks, err := cidstore.NewLocalStore(filepath.Join(dataDir, "blocks"))
+	if err != nil {
+		return nil, err
+	}
+	m := &Manager{
+		byID:     make(map[string]*Organism),
+		dataDir:  orgDir,
+		nodeID:   nodeID,
+		nodeName: nodeName,
+		bus:      bus,
+		reg:      reg,
+		blocks:   blocks,
+	}
+	if err := m.loadAll(); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Blocks returns the content-addressed block store.
+func (m *Manager) Blocks() cidstore.Store {
+	return m.blocks
+}
+
+// EngineFor builds a policy.Engine from the organism's stored policy.
+func EngineFor(org *Organism) *policy.Engine {
+	if org == nil {
+		return policy.NewEngine()
+	}
+	if len(org.Policy.RulesList) > 0 {
+		var rules []policy.Rule
+		for _, r := range org.Policy.RulesList {
+			rules = append(rules, policy.Rule{
+				ID: r.ID,
+				Subje
