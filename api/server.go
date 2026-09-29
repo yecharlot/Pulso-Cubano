@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/api/v1/pulse", s.handlePulse)
 	mux.HandleFunc("/api/v1/genes/run", s.handleGenesRun)
+	mux.HandleFunc("/api/v1/dashboard", s.handleDashboard)
 	mux.HandleFunc("/api/v1/genes/last", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
