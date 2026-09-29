@@ -736,14 +736,16 @@ export const useBreakpoint = () => {
    ========================= 
 */
 export const AlsetInspector = (App) => {
-  const root = document.getElementById("app");
-  
+  let root = document.getElementById("app") || document.getElementById("root");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "app";
+    document.body.appendChild(root);
+  }
   // Sincronización de tema inicial con el DOM Real
   root.style.backgroundColor = Theme.current.background;
-  
   // Establecemos el contexto de montaje inicial
-  currentContext = root; 
-  
+  currentContext = root;
   // Ejecutamos la aplicación
   App();
 };
